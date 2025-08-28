@@ -140,6 +140,16 @@ fn test_trim_swap() {
     }
 }
 #[test]
+fn test_trim_swap_pair() {
+    let mut list = IndexList::from(&mut vec![2, 3]);
+    list.insert_first(1);
+    list.remove_last();
+    debug_print_indexes(&list);
+    list.trim_swap();
+    debug_print_indexes(&list);
+    assert_eq!(list.to_string(), "[1 >< 2]");
+}
+#[test]
 fn test_single_element() {
     let mut list = IndexList::<u64>::new();
     for num in 0..8 {

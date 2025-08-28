@@ -808,28 +808,30 @@ impl<T> IndexList<T> {
     /// assert_eq!(list.len(), list.capacity());
     /// ```
     pub fn trim_swap(&mut self) {
+        self.trim_swap_to(0);
+    }
+    /// Similar to [trim_swap](Self::trim_swap) but the capacity will only be
+    /// shrunk to the specified minimum (or the current length, whichever is
+    /// larger).
+    pub fn trim_swap_to(&mut self, min_capacity: usize) {
         let need = self.size;
-        // destination is all free node indexes below the needed limit
-        let dst: Vec<usize> = self.elems[..need]
-            .iter()
-            .enumerate()
-            .filter(|(n, e)| e.is_none() && n < &need)
-            .map(|(n, _e)| n)
-            .collect();
-        // source is all used node indexes above the needed limit
-        let src: Vec<usize> = self.elems[need..]
-            .iter()
-            .enumerate()
-            .filter(|(_n, e)| e.is_some())
-            .map(|(n, _e)| n + need)
-            .collect();
-        debug_assert_eq!(dst.len(), src.len());
-        src.iter()
-            .zip(dst.iter())
-            .for_each(|(s, d)| self.replace_dest_with_source(*s, *d));
-        self.free.new_both(ListIndex::new());
+        let min_capacity = min_capacity.max(need);
+        let mut ind = self.first_index();
+        let mut i: usize = 0;
+        while ind.is_some() {
+            let new_ind = ListIndex::from(i);
+            self.swap_nodes(ind, new_ind);
+            ind = self.next_index(new_ind);
+            i += 1;
+        }
+        debug_assert_eq!(i, need);
+        self.free.clear();
+        self.used.head = ListIndex::from(0usize);
+        self.used.tail = ListIndex::from(need - 1);
         self.elems.truncate(need);
         self.nodes.truncate(need);
+        self.elems.shrink_to(min_capacity);
+        self.nodes.shrink_to(min_capacity);
     }
     /// Add the elements of the other list at the end.
     ///
@@ -901,10 +903,6 @@ impl<T> IndexList<T> {
         list
     }
 
-    #[inline]
-    fn is_used(&self, at: usize) -> bool {
-        self.elems[at].is_some()
-    }
     fn is_free(&self, at: usize) -> bool {
         self.elems[at].is_none()
     }
@@ -1075,22 +1073,40 @@ impl<T> IndexList<T> {
             debug_assert_eq!(old_head, this);
         }
     }
-    fn replace_dest_with_source(&mut self, src: usize, dst: usize) {
-        debug_assert!(self.is_free(dst));
-        debug_assert!(self.is_used(src));
-        self.linkout_free(ListIndex::from(dst));
-        let src_node = self.get_indexnode(src);
-        let next = src_node.next;
-        let prev = src_node.prev;
-        self.linkout_used(ListIndex::from(src));
-        self.elems[dst] = self.elems[src].take();
-        let this = ListIndex::from(dst);
-        if next.is_some() {
-            self.linkin_this_before_that(this, next);
-        } else if prev.is_some() {
-            self.linkin_this_after_that(this, prev);
-        } else {
-            self.linkin_first(this);
+    /// Does not properly update used/free head or tail. The caller must adjust
+    /// these if they need to be adjusted.
+    fn swap_nodes(&mut self, l: ListIndex, r: ListIndex) {
+        if l == r {
+            return;
+        }
+        let l_i = l.get().unwrap();
+        let r_i = r.get().unwrap();
+        self.elems.swap(l_i, r_i);
+        self.nodes.swap(l_i, r_i);
+        self.correct_swap_neighbors(l, r);
+        self.correct_swap_neighbors(r, l);
+    }
+    /// Awkward helper fn for swap_nodes. If either of ind's neighbors is itself
+    /// (a self-loop), change to instead point to swapped. Otherwise, make the
+    /// neighbor point back to ind. This function does not adjust used/free head
+    /// or tail.
+    fn correct_swap_neighbors(&mut self, ind: ListIndex, swapped: ListIndex) {
+        let ind_i = ind.get().unwrap();
+        if let Some(prev_i) = self.get_indexnode(ind_i).prev.get() {
+            if prev_i == ind_i {
+                self.get_mut_indexnode(ind_i).prev = swapped;
+            } else {
+                let old_next = self.get_mut_indexnode(prev_i).new_next(ind);
+                debug_assert_eq!(old_next, swapped);
+            }
+        }
+        if let Some(next_i) = self.get_indexnode(ind_i).next.get() {
+            if next_i == ind_i {
+                self.get_mut_indexnode(ind_i).next = swapped;
+            } else {
+                let old_prev = self.get_mut_indexnode(next_i).new_prev(ind);
+                debug_assert_eq!(old_prev, swapped);
+            }
         }
     }
 }
